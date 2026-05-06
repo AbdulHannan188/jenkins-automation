@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         // CHANGE THIS to your React app's GitHub URL
-        REACT_REPO_URL = 'https://github.com/AbdulHannan188/your-react-repo.git'
+        REACT_REPO_URL = 'https://github.com/AbdulHannan188/check_deploy.git'
         REACT_BRANCH = 'main'
         BASE_URL = 'http://localhost:5173'
     }
