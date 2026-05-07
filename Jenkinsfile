@@ -26,7 +26,8 @@ pipeline {
     }
 
     stages {
-        // ── 1. Clone check_deploy dev branch ─────────────────────────
+
+        // ── 1. Clone check_deploy (ALL branches) ──────────────────────
         stage('Checkout Frontend (check_deploy)') {
             steps {
                 script {
@@ -39,15 +40,14 @@ pipeline {
                             # Remove old clone if exists
                             rm -rf ${FRONTEND_DIR}
 
-                            # Clone only the dev branch
+                            # Clone ALL branches (no --single-branch)
                             git clone \
-                                --branch ${SOURCE_BRANCH} \
-                                --single-branch \
                                 https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git \
                                 ${FRONTEND_DIR}
 
                             cd ${FRONTEND_DIR}
-                            echo "▶ Cloned commit: \$(git rev-parse --short HEAD)"
+                            git checkout ${SOURCE_BRANCH}
+                            echo "▶ Cloned commit: \$(git rev-parse --short HEAD) on ${SOURCE_BRANCH}"
                         """
                     }
                 }
@@ -104,7 +104,7 @@ pipeline {
             post {
                 always {
                     sh "[ -f vite.pid ] && kill \$(cat vite.pid) 2>/dev/null || true"
-                    sh 'rm -f vite.pid'
+                    sh "rm -f vite.pid"
                     junit allowEmptyResults: true, testResults: 'test-results/results.xml'
                     publishHTML(target: [
                         allowMissing         : false,
@@ -123,46 +123,51 @@ pipeline {
             steps {
                 script {
                     withCredentials([usernamePassword(
-                credentialsId: "${GITHUB_CREDENTIALS}",
-                usernameVariable: 'GIT_USER',
-                passwordVariable: 'GIT_TOKEN'
-            )]) {
+                        credentialsId: "${GITHUB_CREDENTIALS}",
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )]) {
                         sh """
-                    cd ${FRONTEND_DIR}
+                            cd ${FRONTEND_DIR}
 
-                    git config user.email "jenkins@ci.local"
-                    git config user.name  "Jenkins CI"
+                            git config user.email "jenkins@ci.local"
+                            git config user.name  "Jenkins CI"
 
-                    # Authenticate remote
-                    git remote set-url origin \
-                        https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git
+                            # Ensure authenticated remote
+                            git remote set-url origin \
+                                https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git
 
-                    # Fetch all branches (not just dev)
-                    git fetch origin
+                            # Fetch latest from all branches
+                            git fetch origin
 
-                    # Create local main tracking origin/main  ← THIS IS THE FIX
-                    git checkout -b main origin/main
+                            # Show available remote branches (debug)
+                            echo "── Available remote branches ──"
+                            git branch -r
 
-                    # Merge dev into main
-                    git merge --no-ff origin/dev \
-                        -m "CI: merge dev → main ✅ all tests passed"
+                            # Create local main tracking origin/main
+                            git checkout -B ${TARGET_BRANCH} origin/${TARGET_BRANCH}
 
-                    # Push to check_deploy main
-                    git push origin main
-                """
-            }
+                            # Merge dev into main
+                            git merge --no-ff origin/${SOURCE_BRANCH} \
+                                -m "CI: merge ${SOURCE_BRANCH} → ${TARGET_BRANCH} ✅ all tests passed"
+
+                            # Push merged main back to GitHub
+                            git push origin ${TARGET_BRANCH}
+                        """
+                    }
                 }
-                echo '✅ dev merged into main in check_deploy!'
+                echo "✅ ${SOURCE_BRANCH} merged into ${TARGET_BRANCH} in ${FRONTEND_REPO}!"
             }
         }
     }
 
+    // ── Post-pipeline notifications ──────────────────────────────────
     post {
         success {
-            echo '✅ Pipeline SUCCESS — check_deploy dev merged into main'
+            echo "✅ Pipeline SUCCESS — ${SOURCE_BRANCH} merged into ${TARGET_BRANCH}"
         }
         failure {
-            echo '❌ Pipeline FAILED — merge blocked, fix failing tests'
+            echo "❌ Pipeline FAILED — merge blocked, fix failing tests"
         }
         cleanup {
             sh "rm -rf ${VENV_DIR} ${FRONTEND_DIR} test-results"
