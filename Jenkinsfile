@@ -26,7 +26,6 @@ pipeline {
     }
 
     stages {
-
         // ── 1. Clone check_deploy dev branch ─────────────────────────
         stage('Checkout Frontend (check_deploy)') {
             steps {
@@ -105,7 +104,7 @@ pipeline {
             post {
                 always {
                     sh "[ -f vite.pid ] && kill \$(cat vite.pid) 2>/dev/null || true"
-                    sh "rm -f vite.pid"
+                    sh 'rm -f vite.pid'
                     junit allowEmptyResults: true, testResults: 'test-results/results.xml'
                     publishHTML(target: [
                         allowMissing         : false,
@@ -124,44 +123,46 @@ pipeline {
             steps {
                 script {
                     withCredentials([usernamePassword(
-                        credentialsId: "${GITHUB_CREDENTIALS}",
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_TOKEN'
-                    )]) {
+                credentialsId: "${GITHUB_CREDENTIALS}",
+                usernameVariable: 'GIT_USER',
+                passwordVariable: 'GIT_TOKEN'
+            )]) {
                         sh """
-                            cd ${FRONTEND_DIR}
+                    cd ${FRONTEND_DIR}
 
-                            git config user.email "jenkins@ci.local"
-                            git config user.name  "Jenkins CI"
+                    git config user.email "jenkins@ci.local"
+                    git config user.name  "Jenkins CI"
 
-                            # Ensure authenticated remote
-                            git remote set-url origin \
-                                https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git
+                    # Authenticate remote
+                    git remote set-url origin \
+                        https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git
 
-                            # Fetch main branch
-                            git fetch origin ${TARGET_BRANCH}
+                    # Fetch all branches (not just dev)
+                    git fetch origin
 
-                            # Merge dev into main
-                            git checkout ${TARGET_BRANCH}
-                            git merge --no-ff origin/${SOURCE_BRANCH} \
-                                -m "CI: merge dev → main ✅ all tests passed"
+                    # Create local main tracking origin/main  ← THIS IS THE FIX
+                    git checkout -b main origin/main
 
-                            # Push to check_deploy main
-                            git push origin ${TARGET_BRANCH}
-                        """
-                    }
+                    # Merge dev into main
+                    git merge --no-ff origin/dev \
+                        -m "CI: merge dev → main ✅ all tests passed"
+
+                    # Push to check_deploy main
+                    git push origin main
+                """
+            }
                 }
-                echo "✅ dev merged into main in check_deploy!"
+                echo '✅ dev merged into main in check_deploy!'
             }
         }
     }
 
     post {
         success {
-            echo "✅ Pipeline SUCCESS — check_deploy dev merged into main"
+            echo '✅ Pipeline SUCCESS — check_deploy dev merged into main'
         }
         failure {
-            echo "❌ Pipeline FAILED — merge blocked, fix failing tests"
+            echo '❌ Pipeline FAILED — merge blocked, fix failing tests'
         }
         cleanup {
             sh "rm -rf ${VENV_DIR} ${FRONTEND_DIR} test-results"
