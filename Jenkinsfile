@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        GITHUB_REPO        = 'https://github.com/AbdulHannan188/check_deploy.git'// ← change this
+        GITHUB_REPO = 'AbdulHannan188/check_deploy'  // ✅ correc
         GITHUB_CREDENTIALS = 'github-token'                      // ← Jenkins credential ID
         TARGET_BRANCH      = 'main'                              // ← branch to merge into
         PYTHON_VERSION     = 'python3'
