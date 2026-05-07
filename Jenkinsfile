@@ -56,20 +56,6 @@ pipeline {
                 sh """
             . ${VENV_DIR}/bin/activate
 
-            # ── 1. Install frontend deps & start Vite in background ──
-            npm install
-            npm run dev &
-            echo \$! > vite.pid          # save process ID so we can kill it later
-
-            # ── 2. Wait until port 5173 is actually ready ─────────────
-            echo "Waiting for app to start..."
-            for i in \$(seq 1 30); do
-                nc -z localhost 5173 && echo "App is up!" && break
-                echo "  attempt \$i — not ready yet..."
-                sleep 2
-            done
-
-            # ── 3. Run tests ──────────────────────────────────────────
             pytest tests/ \
                 --junitxml=test-results/results.xml \
                 --html=test-results/report.html \
@@ -79,9 +65,6 @@ pipeline {
             }
             post {
                 always {
-                    // ── 4. Kill the Vite server regardless of pass/fail ──────
-                    sh "kill \$(cat vite.pid) || true"
-
                     junit allowEmptyResults: true, testResults: 'test-results/results.xml'
                     publishHTML(target: [
                 allowMissing         : false,
