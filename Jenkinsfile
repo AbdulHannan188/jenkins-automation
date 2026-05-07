@@ -54,9 +54,28 @@ pipeline {
         stage('Run Tests') {
             steps {
                 sh """
-            . ${VENV_DIR}/bin/activate
+            # ── Start the Vite frontend in background ─────────────────
+            npm install
+            npm run dev -- --host 0.0.0.0 --port 5173 &
+            echo \$! > vite.pid
 
-            pytest tests/ \
+            # ── Wait up to 60s for port 5173 to be ready ─────────────
+            echo "Waiting for Vite on port 5173..."
+            for i in \$(seq 1 30); do
+                if nc -z localhost 5173 2>/dev/null; then
+                    echo "✅ Vite is up!"
+                    break
+                fi
+                echo "  [\$i/30] waiting..."
+                sleep 2
+            done
+
+            # ── Hard fail if app never came up ────────────────────────
+            nc -z localhost 5173 || { echo "❌ Vite never started!"; exit 1; }
+
+            # ── Run pytest ────────────────────────────────────────────
+            . ${VENV_DIR}/bin/activate
+            BASE_URL=http://localhost:5173 pytest tests/ \
                 --junitxml=test-results/results.xml \
                 --html=test-results/report.html \
                 --self-contained-html \
@@ -65,6 +84,8 @@ pipeline {
             }
             post {
                 always {
+                    sh "[ -f vite.pid ] && kill \$(cat vite.pid) 2>/dev/null || true"
+                    sh 'rm -f vite.pid'
                     junit allowEmptyResults: true, testResults: 'test-results/results.xml'
                     publishHTML(target: [
                 allowMissing         : false,
