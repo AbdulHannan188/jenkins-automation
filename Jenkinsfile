@@ -2,10 +2,16 @@ pipeline {
     agent any
 
     environment {
-        GITHUB_REPO        = 'AbdulHannan188/check_deploy'  // ✅ correct repo
+        // ── jenkins-automation repo (this repo) ──────────────────────
         GITHUB_CREDENTIALS = 'github-token'
-        SOURCE_BRANCH_NAME = 'dev'
+
+        // ── check_deploy repo (your frontend) ────────────────────────
+        FRONTEND_REPO      = 'AbdulHannan188/check_deploy'
+        FRONTEND_DIR       = 'check_deploy'        // local folder name
+        SOURCE_BRANCH      = 'dev'
         TARGET_BRANCH      = 'main'
+
+        // ── Python ───────────────────────────────────────────────────
         PYTHON_VERSION     = 'python3'
         VENV_DIR           = '.venv'
     }
@@ -21,19 +27,35 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
+        // ── 1. Clone check_deploy dev branch ─────────────────────────
+        stage('Checkout Frontend (check_deploy)') {
             steps {
-                checkout scm
                 script {
-                    env.GIT_COMMIT_SHORT = sh(
-                        script: 'git rev-parse --short HEAD',
-                        returnStdout: true
-                    ).trim()
+                    withCredentials([usernamePassword(
+                        credentialsId: "${GITHUB_CREDENTIALS}",
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )]) {
+                        sh """
+                            # Remove old clone if exists
+                            rm -rf ${FRONTEND_DIR}
+
+                            # Clone only the dev branch
+                            git clone \
+                                --branch ${SOURCE_BRANCH} \
+                                --single-branch \
+                                https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git \
+                                ${FRONTEND_DIR}
+
+                            cd ${FRONTEND_DIR}
+                            echo "▶ Cloned commit: \$(git rev-parse --short HEAD)"
+                        """
+                    }
                 }
-                echo "▶ Commit: ${env.GIT_COMMIT_SHORT} on dev branch"
             }
         }
 
+        // ── 2. Setup Python venv ──────────────────────────────────────
         stage('Setup Python Environment') {
             steps {
                 sh """
@@ -45,29 +67,33 @@ pipeline {
             }
         }
 
+        // ── 3. Start Vite + Run Tests ─────────────────────────────────
         stage('Run Tests') {
             steps {
                 sh """
-                    # ── Install frontend deps & start Vite ───────────────
+                    # ── Install frontend deps & start Vite ───────────
+                    cd ${FRONTEND_DIR}
                     npm install
                     npm run dev -- --host 0.0.0.0 --port 5173 &
-                    echo \$! > vite.pid
+                    echo \$! > ../vite.pid
 
-                    # ── Wait up to 60s for Vite to be ready ──────────────
+                    cd ..
+
+                    # ── Wait up to 60s for Vite ───────────────────────
                     echo "Waiting for Vite on port 5173..."
                     for i in \$(seq 1 30); do
                         if nc -z localhost 5173 2>/dev/null; then
                             echo "✅ Vite is up!"
                             break
                         fi
-                        echo "  [\$i/30] not ready, waiting 2s..."
+                        echo "  [\$i/30] waiting 2s..."
                         sleep 2
                     done
 
-                    # ── Hard fail if Vite never started ───────────────────
+                    # ── Hard fail if Vite never came up ───────────────
                     nc -z localhost 5173 || { echo "❌ Vite never started!"; exit 1; }
 
-                    # ── Run pytest ────────────────────────────────────────
+                    # ── Run pytest ────────────────────────────────────
                     . ${VENV_DIR}/bin/activate
                     BASE_URL=http://localhost:5173 pytest tests/ \
                         --junitxml=test-results/results.xml \
@@ -93,7 +119,8 @@ pipeline {
             }
         }
 
-        stage('Merge dev → main') {
+        // ── 4. Merge dev → main in check_deploy ──────────────────────
+        stage('Merge dev → main (check_deploy)') {
             steps {
                 script {
                     withCredentials([usernamePassword(
@@ -102,38 +129,42 @@ pipeline {
                         passwordVariable: 'GIT_TOKEN'
                     )]) {
                         sh """
+                            cd ${FRONTEND_DIR}
+
                             git config user.email "jenkins@ci.local"
                             git config user.name  "Jenkins CI"
 
-                            # Authenticate remote
+                            # Ensure authenticated remote
                             git remote set-url origin \
-                                https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${GITHUB_REPO}.git
+                                https://\${GIT_USER}:\${GIT_TOKEN}@github.com/${FRONTEND_REPO}.git
 
-                            # Fetch both branches
-                            git fetch origin
+                            # Fetch main branch
+                            git fetch origin ${TARGET_BRANCH}
 
-                            # Merge dev into main and push
-                            git checkout main
-                            git merge --no-ff origin/dev \
-                                -m "CI: merge dev → main [${env.GIT_COMMIT_SHORT}] ✅ all tests passed"
-                            git push origin main
+                            # Merge dev into main
+                            git checkout ${TARGET_BRANCH}
+                            git merge --no-ff origin/${SOURCE_BRANCH} \
+                                -m "CI: merge dev → main ✅ all tests passed"
+
+                            # Push to check_deploy main
+                            git push origin ${TARGET_BRANCH}
                         """
                     }
                 }
-                echo "✅ dev successfully merged into main!"
+                echo "✅ dev merged into main in check_deploy!"
             }
         }
     }
 
     post {
         success {
-            echo "✅ Pipeline SUCCESS — dev merged into main"
+            echo "✅ Pipeline SUCCESS — check_deploy dev merged into main"
         }
         failure {
-            echo "❌ Pipeline FAILED — merge blocked, tests did not pass"
+            echo "❌ Pipeline FAILED — merge blocked, fix failing tests"
         }
         cleanup {
-            sh "rm -rf ${VENV_DIR} test-results"
+            sh "rm -rf ${VENV_DIR} ${FRONTEND_DIR} test-results"
         }
     }
 }
